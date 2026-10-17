@@ -1,0 +1,266 @@
+"""
+Kodin energiaraportti – kuukausi- ja vuosikooste.
+
+Data: energia_kk.csv (HOOBS lähettää kerran päivässä Hostingeriin)
+Lämpötila: Ilmatieteen laitoksen avoin data, Helsinki-Vantaan lentoasema (fmisid 100968)
+
+Secrets (.streamlit/secrets.toml tai Streamlit Cloudin Secrets-asetus):
+    APP_PASSWORD  = "..."
+    DATA_URL      = "https://oma-domain.fi/energia/energia_kk.csv"
+    DATA_USER     = "..."
+    DATA_PASSWORD = "..."
+"""
+
+import hmac
+import io
+import xml.etree.ElementTree as ET
+from datetime import date
+
+import pandas as pd
+import plotly.graph_objects as go
+import requests
+import streamlit as st
+from plotly.subplots import make_subplots
+
+st.set_page_config(page_title="Energiaraportti", page_icon="⚡", layout="wide")
+
+FMISID = 100968  # Helsinki-Vantaan lentoasema
+FMI_URL = "https://opendata.fmi.fi/wfs"
+KK = ["tammi", "helmi", "maalis", "huhti", "touko", "kesä",
+      "heinä", "elo", "syys", "loka", "marras", "joulu"]
+
+# Kiinteät värit kohteittain (väri seuraa kohdetta, ei järjestystä)
+SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100",
+          "#e87ba4", "#008300", "#6250d6", "#e34948"]
+TALOUS_COLOR = "#a9a79f"   # jäännöserä neutraalina
+TEMP_COLOR = "#52514e"
+
+
+# --- Kirjautuminen -----------------------------------------------------------
+
+def check_password():
+    if st.session_state.get("auth_ok"):
+        return True
+    st.title("⚡ Energiaraportti")
+    pw = st.text_input("Salasana", type="password")
+    if pw:
+        if hmac.compare_digest(pw, st.secrets["APP_PASSWORD"]):
+            st.session_state.auth_ok = True
+            st.rerun()
+        st.error("Väärä salasana")
+    return False
+
+
+# --- Data --------------------------------------------------------------------
+
+@st.cache_data(ttl=3600, show_spinner="Haetaan kulutusdataa…")
+def load_energy():
+    user, pw = st.secrets.get("DATA_USER"), st.secrets.get("DATA_PASSWORD")
+    resp = requests.get(st.secrets["DATA_URL"],
+                        auth=(user, pw) if user and pw else None,  # tunnukset valinnaisia
+                        timeout=20)
+    resp.raise_for_status()
+    df = pd.read_csv(io.StringIO(resp.content.decode("utf-8")))
+    df["kuukausi"] = pd.PeriodIndex(df["kuukausi"], freq="M")
+    df["vuosi"] = df["kuukausi"].dt.year
+    df["kk"] = df["kuukausi"].dt.month
+    return df
+
+
+@st.cache_data(ttl=12 * 3600, show_spinner=False)
+def fmi_month_mean(year: int, month: int):
+    """Kuukauden keskilämpötila päivien keskiarvoista (kesken olevalle kk:lle tähänastinen)."""
+    start = date(year, month, 1)
+    end = date(year + (month == 12), month % 12 + 1, 1)
+    end = min(end, date.today())
+    if end <= start:
+        return None
+    params = {
+        "service": "WFS", "version": "2.0.0", "request": "getFeature",
+        "storedquery_id": "fmi::observations::weather::daily::simple",
+        "fmisid": FMISID, "parameters": "tday",
+        "starttime": f"{start}T00:00:00Z",
+        "endtime": f"{end}T00:00:00Z",
+    }
+    try:
+        r = requests.get(FMI_URL, params=params, timeout=20)
+        r.raise_for_status()
+        root = ET.fromstring(r.content)
+    except Exception:
+        return None
+    vals = []
+    for el in root.iter():
+        if el.tag.endswith("BsWfsElement"):
+            t = v = None
+            for c in el:
+                if c.tag.endswith("Time"):
+                    t = c.text
+                elif c.tag.endswith("ParameterValue"):
+                    v = c.text
+            if t and v and t[:7] == f"{year}-{month:02d}" and v.lower() != "nan":
+                vals.append(float(v))
+    return round(sum(vals) / len(vals), 1) if vals else None
+
+
+def temps_for(periods):
+    return {p: fmi_month_mean(p.year, p.month) for p in periods}
+
+
+def color_map(df):
+    """Käsin syötetyt ensin, sitten Shelly-laitteet aakkosjärjestyksessä."""
+    er = df[df["tyyppi"] == "eritelty"]
+    manual = sorted(er.loc[er["lahde"] == "käsin", "kohde"].unique())
+    shelly = sorted(set(er["kohde"]) - set(manual))
+    order = manual + shelly
+    cmap = {k: SERIES[i % len(SERIES)] for i, k in enumerate(order)}
+    cmap["Taloussähkö"] = TALOUS_COLOR
+    return order + ["Taloussähkö"], cmap
+
+
+def fmt(v, dec=0):
+    return f"{v:,.{dec}f}".replace(",", " ").replace(".", ",")
+
+
+# --- Näkymät -----------------------------------------------------------------
+
+def monthly_view(df, order, cmap):
+    years = sorted(df["vuosi"].unique(), reverse=True)
+    year = st.selectbox("Vuosi", years, index=0)
+    d = df[df["vuosi"] == year]
+    parts = d[d["tyyppi"].isin(["eritelty", "talous"])]
+    total = d[d["tyyppi"] == "kokonais"].set_index("kk")["kwh"]
+    months = sorted(d["kk"].unique())
+    labels = [KK[m - 1] for m in months]
+
+    with st.spinner("Haetaan lämpötiloja…"):
+        temps = temps_for([pd.Period(f"{year}-{m:02d}", "M") for m in months])
+    tvals = [temps[pd.Period(f"{year}-{m:02d}", "M")] for m in months]
+
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    for k in order:
+        s = parts[parts["kohde"] == k].set_index("kk")["kwh"]
+        if s.empty:
+            continue
+        fig.add_bar(x=labels, y=[s.get(m) for m in months], name=k,
+                    marker=dict(color=cmap[k], line=dict(width=1, color="rgba(255,255,255,0.9)")),
+                    hovertemplate=f"<b>{k}</b><br>%{{x}}: %{{y:,.0f}} kWh<extra></extra>",
+                    secondary_y=False)
+    # Kokonaissumma pylvään yläpuolelle
+    fig.add_scatter(x=labels, y=[total.get(m) for m in months], mode="text",
+                    text=[fmt(total.get(m)) if m in total else "" for m in months],
+                    textposition="top center", showlegend=False, hoverinfo="skip",
+                    textfont=dict(size=11), secondary_y=False)
+    # Lämpötila oikealle akselille, katkoviivalla erotukseksi pylväistä
+    fig.add_scatter(x=labels, y=tvals, mode="lines+markers", name="Keskilämpötila (°C)",
+                    line=dict(color=TEMP_COLOR, width=2, dash="dash"),
+                    marker=dict(size=8, color=TEMP_COLOR),
+                    hovertemplate="%{x}: %{y:.1f} °C<extra>Helsinki-Vantaa</extra>",
+                    secondary_y=True)
+    fig.update_layout(barmode="stack", bargap=0.3, height=560,
+                      title="Kulutus kohteittain ja keskilämpötila (Helsinki-Vantaa)",
+                      legend=dict(orientation="h", y=-0.12),
+                      margin=dict(l=10, r=10, t=50, b=10), hovermode="closest")
+    fig.update_yaxes(title_text="kWh", gridcolor="rgba(128,128,128,0.15)", secondary_y=False)
+    fig.update_yaxes(title_text="°C", showgrid=False, zeroline=True,
+                     zerolinecolor="rgba(128,128,128,0.4)", ticksuffix=" °C",
+                     secondary_y=True)
+    st.plotly_chart(fig, use_container_width=True)
+
+    partial = d[d["osittainen"] == 1]
+    if not partial.empty:
+        st.caption("Shelly-mittaus alkanut kesken kuukauden: " +
+                   ", ".join(f"{r.kohde} ({KK[r.kk - 1]})" for r in partial.itertuples()) +
+                   ". Mittaamaton osa sisältyy taloussähköön.")
+
+    with st.expander("Taulukko"):
+        tab = parts.pivot_table(index="kohde", columns="kk", values="kwh", aggfunc="sum")
+        tab = tab.reindex([k for k in order if k in tab.index])
+        tab.loc["Kokonaiskulutus"] = total
+        tab.loc["Lämpötila °C"] = pd.Series(tvals, index=months, dtype="float")
+        tab.columns = [KK[m - 1] for m in tab.columns]
+        st.dataframe(tab.round(1), use_container_width=True)
+
+
+def yearly_view(df, order, cmap):
+    parts = df[df["tyyppi"].isin(["eritelty", "talous"])]
+    yearly = parts.pivot_table(index="vuosi", columns="kohde", values="kwh", aggfunc="sum").fillna(0)
+    totals = df[df["tyyppi"] == "kokonais"].groupby("vuosi")["kwh"].sum()
+    nmonths = df[df["tyyppi"] == "kokonais"].groupby("vuosi")["kk"].nunique()
+    years = list(yearly.index)
+
+    # Tunnusluvut viimeisimmältä vuodelta
+    y = years[-1]
+    cols = st.columns(3)
+    cols[0].metric(f"Kokonaiskulutus {y}", f"{fmt(totals.get(y, 0))} kWh",
+                   help=f"{nmonths.get(y, 0)} kuukautta")
+    if len(years) > 1 and y - 1 in totals:
+        prev = df[(df["vuosi"] == y - 1) & (df["tyyppi"] == "kokonais") &
+                  (df["kk"] <= df[df["vuosi"] == y]["kk"].max())]["kwh"].sum()
+        cols[1].metric("Muutos edelliseen vuoteen (sama jakso)",
+                       f"{(totals[y] / prev - 1) * 100:+.1f} %" if prev else "–")
+    with st.spinner("Haetaan lämpötiloja…"):
+        per = df.loc[df["vuosi"] == y, "kuukausi"].unique()
+        t = [v for v in temps_for(list(per)).values() if v is not None]
+    cols[2].metric(f"Keskilämpötila {y}", f"{sum(t) / len(t):.1f} °C".replace(".", ",") if t else "–",
+                   help="Helsinki-Vantaa, kuukausien keskiarvo")
+
+    fig = go.Figure()
+    for k in order:
+        if k in yearly.columns:
+            fig.add_bar(x=[str(v) for v in years], y=yearly[k], name=k,
+                        marker=dict(color=cmap[k], line=dict(width=1, color="rgba(255,255,255,0.9)")),
+                        hovertemplate=f"<b>{k}</b><br>%{{x}}: %{{y:,.0f}} kWh<extra></extra>")
+    fig.add_scatter(x=[str(v) for v in years], y=[totals.get(v) for v in years], mode="text",
+                    text=[fmt(totals.get(v, 0)) for v in years], textposition="top center",
+                    showlegend=False, hoverinfo="skip")
+    fig.update_layout(barmode="stack", bargap=0.45, height=460, title="Vuosikulutus kohteittain (kWh)",
+                      legend=dict(orientation="h", y=-0.12), margin=dict(l=10, r=10, t=50, b=10))
+    fig.update_yaxes(gridcolor="rgba(128,128,128,0.15)")
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Osuudet
+    share = yearly.T.reindex([k for k in order if k in yearly.columns])
+    pct = share.div(share.sum(), axis=1) * 100
+    out = pd.DataFrame({f"{v} kWh": share[v].round(0) for v in years} |
+                       {f"{v} %": pct[v].round(1) for v in years})
+    st.subheader("Kohteiden osuudet")
+    st.dataframe(out, use_container_width=True)
+
+    # Kuukausittainen kokonaiskulutus vuosittain rinnakkain
+    tot = df[df["tyyppi"] == "kokonais"]
+    fig2 = go.Figure()
+    for i, v in enumerate(years):
+        s = tot[tot["vuosi"] == v].set_index("kk")["kwh"]
+        fig2.add_scatter(x=[KK[m - 1] for m in s.index], y=s.values, name=str(v),
+                         mode="lines+markers", line=dict(width=2, color=SERIES[i % len(SERIES)]),
+                         marker=dict(size=8),
+                         hovertemplate=f"{v} %{{x}}: %{{y:,.0f}} kWh<extra></extra>")
+    fig2.update_layout(title="Kokonaiskulutus kuukausittain, vuosivertailu (kWh)", height=380,
+                       margin=dict(l=10, r=10, t=50, b=10), hovermode="x unified",
+                       legend=dict(orientation="h", y=-0.15))
+    fig2.update_xaxes(categoryorder="array", categoryarray=KK)
+    fig2.update_yaxes(gridcolor="rgba(128,128,128,0.15)")
+    st.plotly_chart(fig2, use_container_width=True)
+
+    st.caption("Huom. Shelly-erittely alkaa lokakuusta 2026. Sitä ennen esim. maalämpöpumpun "
+               "kulutus sisältyy taloussähköön, joten vuosien osuudet eivät ole suoraan vertailukelpoisia.")
+
+
+# --- Pääohjelma --------------------------------------------------------------
+
+if check_password():
+    st.title("⚡ Kodin energiaraportti")
+    try:
+        df = load_energy()
+    except Exception as e:
+        st.error(f"Datan haku epäonnistui: {e}")
+        st.stop()
+    order, cmap = color_map(df)
+    last = df["kuukausi"].max()
+    st.caption(f"Data {df['kuukausi'].min()} – {last}. Päivittyy kerran vuorokaudessa.")
+
+    t1, t2 = st.tabs(["Kuukausiraportti", "Vuosikooste"])
+    with t1:
+        monthly_view(df, order, cmap)
+    with t2:
+        yearly_view(df, order, cmap)

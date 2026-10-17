@@ -15,6 +15,7 @@ Secrets (.streamlit/secrets.toml tai Streamlit Cloudin Secrets-asetus):
 
 import hmac
 import math
+import time
 import io
 import xml.etree.ElementTree as ET
 from datetime import date, timedelta
@@ -60,7 +61,10 @@ def check_password():
 @st.cache_data(ttl=3600, show_spinner="Haetaan kulutusdataa…")
 def load_energy():
     user, pw = st.secrets.get("DATA_USER"), st.secrets.get("DATA_PASSWORD")
+    # Aikaleima osoitteeseen ja no-cache-otsake ohittavat palvelimen/CDN:n välimuistin
     resp = requests.get(st.secrets["DATA_URL"],
+                        params={"t": int(time.time())},
+                        headers={"Cache-Control": "no-cache", "Pragma": "no-cache"},
                         auth=(user, pw) if user and pw else None,  # tunnukset valinnaisia
                         timeout=20)
     resp.raise_for_status()
@@ -305,7 +309,11 @@ if check_password():
         st.stop()
     order, cmap = color_map(df)
     last = df["kuukausi"].max()
-    st.caption(f"Data {df['kuukausi'].min()} – {last}. Päivittyy kerran vuorokaudessa.")
+    c1, c2 = st.columns([5, 1])
+    c1.caption(f"Data {df['kuukausi'].min()} – {last}. Päivittyy kerran vuorokaudessa.")
+    if c2.button("🔄 Päivitä data", use_container_width=True):
+        load_energy.clear()
+        st.rerun()
 
     t1, t2 = st.tabs(["Kuukausiraportti", "Vuosikooste"])
     with t1:

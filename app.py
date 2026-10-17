@@ -1,5 +1,5 @@
 """
-Kodin energiaraportti – kuukausi- ja vuosikooste.
+Tuulensuunkaari 12 sähkönkulutus – kuukausi- ja vuosikooste.
 
 Data: energia_kk.csv (HOOBS lähettää kerran päivässä Hostingeriin)
 Lämpötila: oma sääasema (Weather Underground PWS) jos avain on asetettu,
@@ -25,7 +25,7 @@ import requests
 import streamlit as st
 from plotly.subplots import make_subplots
 
-st.set_page_config(page_title="Energiaraportti", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="Tuulensuunkaari 12 sähkönkulutus", page_icon="⚡", layout="wide")
 
 FMISID = 100968  # Helsinki-Vantaan lentoasema
 FMI_URL = "https://opendata.fmi.fi/wfs"
@@ -45,7 +45,7 @@ WU_URL = "https://api.weather.com/v2/pws/history/daily"
 def check_password():
     if st.session_state.get("auth_ok"):
         return True
-    st.title("⚡ Energiaraportti")
+    st.title("⚡ Tuulensuunkaari 12 sähkönkulutus")
     pw = st.text_input("Salasana", type="password")
     if pw:
         if hmac.compare_digest(pw, st.secrets["APP_PASSWORD"]):
@@ -297,7 +297,7 @@ def yearly_view(df, order, cmap):
 # --- Pääohjelma --------------------------------------------------------------
 
 if check_password():
-    st.title("⚡ Kodin energiaraportti")
+    st.title("⚡ Tuulensuunkaari 12 sähkönkulutus")
     try:
         df = load_energy()
     except Exception as e:

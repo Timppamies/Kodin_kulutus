@@ -10,7 +10,7 @@ Shelly-laitteet ──(minuutin välein)──> HOOBS: shelly.db
 manual.csv (kokonais, auto, sauna) ──> HOOBS
 HOOBS: shelly_export.py ──(kerran päivässä, FTPS)──> Hostinger: sivuston juuri /energia_kk.csv
 Streamlit Cloud: app.py ──(HTTPS + tunnukset)──> energia_kk.csv
-                         └─> Ilmatieteen laitos (lämpötila)
+                         └─> lämpötila: oma sääasema (Wunderground), varalla Ilmatieteen laitos
 ```
 
 ## Tiedostot

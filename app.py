@@ -2,19 +2,22 @@
 Kodin energiaraportti – kuukausi- ja vuosikooste.
 
 Data: energia_kk.csv (HOOBS lähettää kerran päivässä Hostingeriin)
-Lämpötila: Ilmatieteen laitoksen avoin data, Helsinki-Vantaan lentoasema (fmisid 100968)
+Lämpötila: oma sääasema (Weather Underground PWS) jos avain on asetettu,
+           muuten / puuttuville kuukausille Ilmatieteen laitos, Helsinki-Vantaa (fmisid 100968)
 
 Secrets (.streamlit/secrets.toml tai Streamlit Cloudin Secrets-asetus):
     APP_PASSWORD  = "..."
-    DATA_URL      = "https://oma-domain.fi/energia/energia_kk.csv"
-    DATA_USER     = "..."
-    DATA_PASSWORD = "..."
+    DATA_URL      = "https://oma-domain.fi/energia_kk.csv"
+    WU_API_KEY    = "..."          # valinnainen
+    WU_STATION    = "IETELSUO12"   # valinnainen
+    DATA_USER / DATA_PASSWORD      # valinnaiset, jos CSV on salasanasuojattu
 """
 
 import hmac
+import math
 import io
 import xml.etree.ElementTree as ET
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -33,7 +36,8 @@ KK = ["tammi", "helmi", "maalis", "huhti", "touko", "kesä",
 SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100",
           "#e87ba4", "#008300", "#6250d6", "#e34948"]
 TALOUS_COLOR = "#a9a79f"   # jäännöserä neutraalina
-TEMP_COLOR = "#52514e"
+TEMP_COLOR = "#e34948"     # punainen
+WU_URL = "https://api.weather.com/v2/pws/history/daily"
 
 
 # --- Kirjautuminen -----------------------------------------------------------
@@ -102,8 +106,44 @@ def fmi_month_mean(year: int, month: int):
     return round(sum(vals) / len(vals), 1) if vals else None
 
 
+@st.cache_data(ttl=12 * 3600, show_spinner=False)
+def wu_month_mean(year: int, month: int, station: str, key: str):
+    """Oman sääaseman kuukausikeskiarvo päivien keskilämpötiloista (yksi kutsu / kk)."""
+    start = date(year, month, 1)
+    end = date(year + (month == 12), month % 12 + 1, 1) - timedelta(days=1)
+    end = min(end, date.today())
+    if end < start:
+        return None
+    params = {"stationId": station, "format": "json", "units": "m",
+              "numericPrecision": "decimal", "apiKey": key,
+              "startDate": start.strftime("%Y%m%d"), "endDate": end.strftime("%Y%m%d")}
+    try:
+        r = requests.get(WU_URL, params=params, timeout=20)
+        if r.status_code == 204:  # ei dataa jaksolta
+            return None
+        r.raise_for_status()
+        obs = r.json().get("observations", [])
+    except Exception:
+        return None
+    vals = [o["metric"]["tempAvg"] for o in obs
+            if (o.get("metric") or {}).get("tempAvg") is not None]
+    return round(sum(vals) / len(vals), 1) if vals else None
+
+
 def temps_for(periods):
-    return {p: fmi_month_mean(p.year, p.month) for p in periods}
+    """Palauttaa ({kk: °C}, lähteen kuvaus). Oma asema ensin, puutteet Helsinki-Vantaalta."""
+    key, station = st.secrets.get("WU_API_KEY"), st.secrets.get("WU_STATION")
+    temps, used = {}, set()
+    for p in periods:
+        v = wu_month_mean(p.year, p.month, station, key) if key and station else None
+        if v is not None:
+            used.add(f"oma sääasema {station}")
+        else:
+            v = fmi_month_mean(p.year, p.month)
+            if v is not None:
+                used.add("Helsinki-Vantaa")
+        temps[p] = v
+    return temps, " + ".join(sorted(used)) or "ei saatavilla"
 
 
 def color_map(df):
@@ -133,7 +173,7 @@ def monthly_view(df, order, cmap):
     labels = [KK[m - 1] for m in months]
 
     with st.spinner("Haetaan lämpötiloja…"):
-        temps = temps_for([pd.Period(f"{year}-{m:02d}", "M") for m in months])
+        temps, tsrc = temps_for([pd.Period(f"{year}-{m:02d}", "M") for m in months])
     tvals = [temps[pd.Period(f"{year}-{m:02d}", "M")] for m in months]
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
@@ -154,16 +194,23 @@ def monthly_view(df, order, cmap):
     fig.add_scatter(x=labels, y=tvals, mode="lines+markers", name="Keskilämpötila (°C)",
                     line=dict(color=TEMP_COLOR, width=2, dash="dash"),
                     marker=dict(size=8, color=TEMP_COLOR),
-                    hovertemplate="%{x}: %{y:.1f} °C<extra>Helsinki-Vantaa</extra>",
+                    hovertemplate=f"%{{x}}: %{{y:.1f}} °C<extra>{tsrc}</extra>",
                     secondary_y=True)
     fig.update_layout(barmode="stack", bargap=0.3, height=560,
-                      title="Kulutus kohteittain ja keskilämpötila (Helsinki-Vantaa)",
+                      title=f"Kulutus kohteittain ja keskilämpötila ({tsrc})",
                       legend=dict(orientation="h", y=-0.12),
                       margin=dict(l=10, r=10, t=50, b=10), hovermode="closest")
     fig.update_yaxes(title_text="kWh", gridcolor="rgba(128,128,128,0.15)", secondary_y=False)
-    fig.update_yaxes(title_text="°C", showgrid=False, zeroline=True,
-                     zerolinecolor="rgba(128,128,128,0.4)", ticksuffix=" °C",
-                     secondary_y=True)
+    # Lämpötila-akseli: kokonaisluvut 5 asteen välein, nolla aina näkyvissä
+    tv = [t for t in tvals if t is not None] or [0]
+    lo = min(0, math.floor(min(tv) / 5) * 5)
+    hi = max(0, math.ceil(max(tv) / 5) * 5)
+    if hi - lo < 10:
+        hi = lo + 10
+    fig.update_yaxes(title_text="°C", showgrid=False, range=[lo - 1, hi + 1],
+                     tickmode="linear", tick0=0, dtick=5, tickformat="d",
+                     zeroline=True, zerolinecolor="rgba(227,73,72,0.5)", zerolinewidth=1,
+                     color=TEMP_COLOR, secondary_y=True)
     st.plotly_chart(fig, use_container_width=True)
 
     partial = d[d["osittainen"] == 1]
@@ -200,9 +247,10 @@ def yearly_view(df, order, cmap):
                        f"{(totals[y] / prev - 1) * 100:+.1f} %" if prev else "–")
     with st.spinner("Haetaan lämpötiloja…"):
         per = df.loc[df["vuosi"] == y, "kuukausi"].unique()
-        t = [v for v in temps_for(list(per)).values() if v is not None]
+        tdict, tsrc = temps_for(list(per))
+        t = [v for v in tdict.values() if v is not None]
     cols[2].metric(f"Keskilämpötila {y}", f"{sum(t) / len(t):.1f} °C".replace(".", ",") if t else "–",
-                   help="Helsinki-Vantaa, kuukausien keskiarvo")
+                   help=f"{tsrc}, kuukausien keskiarvo")
 
     fig = go.Figure()
     for k in order:

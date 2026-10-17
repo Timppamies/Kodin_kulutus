@@ -267,6 +267,7 @@ def yearly_view(df, order, cmap):
                     showlegend=False, hoverinfo="skip")
     fig.update_layout(barmode="stack", bargap=0.45, height=460, title="Vuosikulutus kohteittain (kWh)",
                       legend=dict(orientation="h", y=-0.12), margin=dict(l=10, r=10, t=50, b=10))
+    fig.update_xaxes(type="category")  # vuodet kokonaislukuina, ei 2024,5
     fig.update_yaxes(gridcolor="rgba(128,128,128,0.15)")
     st.plotly_chart(fig, use_container_width=True)
 
@@ -283,17 +284,20 @@ def yearly_view(df, order, cmap):
     fig2 = go.Figure()
     for i, v in enumerate(years):
         s = tot[tot["vuosi"] == v].set_index("kk")["kwh"]
-        fig2.add_scatter(x=[KK[m - 1] for m in s.index], y=s.values, name=str(v),
-                         mode="lines+markers", line=dict(width=2, color=SERIES[i % len(SERIES)]),
-                         marker=dict(size=8),
-                         hovertemplate=f"{v} %{{x}}: %{{y:,.0f}} kWh<extra></extra>")
-    fig2.update_layout(title="Kokonaiskulutus kuukausittain, vuosivertailu (kWh)", height=380,
+        fig2.add_bar(x=[KK[m - 1] for m in s.index], y=s.values, name=str(v),
+                     marker=dict(color=SERIES[i % len(SERIES)],
+                                 line=dict(width=1, color="rgba(255,255,255,0.9)")),
+                     hovertemplate=f"{v} %{{x}}: %{{y:,.0f}} kWh<extra></extra>")
+    fig2.update_layout(title="Kokonaiskulutus kuukausittain, vuosivertailu (kWh)", height=400,
+                       barmode="group", bargap=0.25, bargroupgap=0.05,
                        margin=dict(l=10, r=10, t=50, b=10), hovermode="x unified",
                        legend=dict(orientation="h", y=-0.15))
     fig2.update_xaxes(categoryorder="array", categoryarray=KK)
     fig2.update_yaxes(gridcolor="rgba(128,128,128,0.15)")
     st.plotly_chart(fig2, use_container_width=True)
 
+    st.info("🚗 Kesäkuusta 2025 alkaen taloudessa on kaksi sähköautoa. "
+            "Vuoden 2026 alusta autot on ladattu kotona, koska veroetu muuttui.")
     st.caption("Huom. Shelly-erittely alkaa lokakuusta 2026. Sitä ennen esim. maalämpöpumpun "
                "kulutus sisältyy taloussähköön, joten vuosien osuudet eivät ole suoraan vertailukelpoisia.")
 

@@ -63,8 +63,17 @@ kuukausi;kohde;kwh;osittainen
 - `kohde` kirjoitetaan täsmälleen kuten keräimen `DEVICES`-listassa, jotta historia ja
   uusi data näkyvät samana sarjana.
 - `osittainen = 1`, jos kuukausi on vajaa. Kuukausi, jolta dataa ei ole, jätetään pois.
-- Historiaa käytetään kuukausille `HISTORY_UNTIL` (shelly_report.py, nyt `2026-09`) asti;
-  sen jälkeiset rivit ohitetaan ja data tulee `shelly.db`:stä.
+- Kuukausille `HISTORY_UNTIL` (shelly_report.py, nyt `2026-09`) asti käytetään vain historiaa.
+  Sen jälkeen historia ja `shelly.db` lasketaan yhteen, joten lokakuulle 2026 viedään
+  historiaan vain päivät ennen keräimen käynnistymistä (1.–15.10.).
+
+Shelly Cloudin laitekohtaisen viennin (Consumption, Wh) saa muunnettua ja lisättyä
+history.csv:hen skriptillä; saman kohteen vanhat rivit korvataan:
+
+```
+python3 hoobs/shelly_history_import.py "Varasto lämmitys" 2026YTD_varasto.csv
+python3 hoobs/shelly_history_import.py kuivauskaappi kuivauskaappi.csv --partial 2025-03
+```
 
 ## Datan muoto (energia_kk.csv)
 

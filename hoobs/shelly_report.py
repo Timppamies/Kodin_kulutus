@@ -19,7 +19,9 @@ Lähteet (kaikki kansiossa ~/shelly):
                    - osittainen = 1, jos kohteen kuukausi on vajaa (puuttuva osa
                      päätyy taloussähköön); muuten tyhjä tai 0
                    - puuttuva kuukausi jätetään kokonaan pois (ei 0-riviä)
-                   - käytetään kuukausille HISTORY_UNTIL asti, sen jälkeen shelly.db
+                   - HISTORY_UNTIL-kuukauteen asti vain historia; sen jälkeen
+                     historia + shelly.db yhteen (vain päivät ennen keräintä!)
+                   - laitekohtaisen Shelly-viennin muunnos: shelly_history_import.py
 
 Taloussähkö = kokonaiskulutus - sähköauto - sauna - kaikki Shelly-mittaukset.
 Shelly-laitteet eivät saa mitata samaa kuormaa keskenään eivätkä autoa tai
@@ -44,8 +46,10 @@ HISTORY = BASE / "history.csv"
 OUT = BASE / "raportti.csv"
 TZ = ZoneInfo("Europe/Helsinki")
 
-# Viimeinen kuukausi, jonka Shelly-kohteet otetaan history.csv:stä.
-# Myöhemmät kuukaudet tulevat keräimen tietokannasta (shelly.db).
+# Viimeinen kuukausi, jonka Shelly-kohteet otetaan pelkästään history.csv:stä.
+# Myöhemmillä kuukausilla historia ja keräin (shelly.db) lasketaan yhteen:
+# esim. lokakuu 2026 = historia 1.–15.10. + keräin 17.10. alkaen. Historiaan
+# saa siis viedä näiltä kuukausilta vain päivät ennen keräimen käynnistymistä.
 HISTORY_UNTIL = "2026-09"
 
 
@@ -138,13 +142,11 @@ def read_datahub():
 
 def read_history():
     """Palauttaa ({kk: {kohde: kWh}}, {(kk, kohde) osittaisina}).
-    Rivit HISTORY_UNTIL-kuukauden jälkeen ohitetaan (ne tulevat shelly.db:stä).
     Saman kuukauden ja kohteen myöhempi rivi korvaa aiemman."""
     hist = defaultdict(dict)
     partial = set()
     if not HISTORY.exists():
         return hist, partial
-    skipped = 0
     for line in HISTORY.read_text(encoding="utf-8-sig").splitlines():
         parts = [p.strip() for p in line.split(";")]
         if len(parts) < 3 or not parts[0][:4].isdigit():
@@ -152,17 +154,11 @@ def read_history():
         m, k, v = parts[0], parts[1], num(parts[2])
         if v is None or not k:
             continue
-        if m > HISTORY_UNTIL:
-            skipped += 1
-            continue
         hist[m][k] = v
         if len(parts) > 3 and parts[3] in ("1", "x", "kyllä"):
             partial.add((m, k))
         else:
             partial.discard((m, k))
-    if skipped:
-        print(f"history.csv: ohitettu {skipped} riviä {HISTORY_UNTIL} jälkeen "
-              f"(ne luetaan shelly.db:stä)")
     return hist, partial
 
 
@@ -183,12 +179,16 @@ def shelly_items():
     partial |= hist_partial
     for m, items in db.items():
         if m <= HISTORY_UNTIL:
-            continue  # historia on näille kuukausille ensisijainen
+            continue  # historia on näille kuukausille ainoa lähde
         for d, v in items.items():
-            values[m][d] = v
-            source[m][d] = "Shelly"
-            if first_month.get(d) == m:
-                partial.add((m, d))
+            if d in values[m]:  # historia + keräin samassa kuussa
+                values[m][d] += v
+                source[m][d] = "Shelly-historia + Shelly"
+            else:
+                values[m][d] = v
+                source[m][d] = "Shelly"
+                if first_month.get(d) == m:
+                    partial.add((m, d))
     return values, source, partial
 
 

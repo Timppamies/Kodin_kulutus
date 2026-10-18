@@ -303,6 +303,110 @@ def yearly_view(df, order, cmap):
                "niillä mittaamaton kulutus sisältyy taloussähköön.")
 
 
+# --- Ryhmävertailu -----------------------------------------------------------
+
+# Kohde -> ryhmä. Listaamattomat eritellyt kohteet menevät taloussähköön.
+GROUPS = {
+    "Lämmitys": ["Varasto lämmitys", "Maalämpö", "IVK",
+                 "AT lämmitys", "AT kuivaus", "AT ILP"],
+    "Sähköauto": ["Sähköauto"],
+    "Sauna": ["Sauna"],
+    "Taloussähkö": ["Taloussähkö", "Kuivauskaappi"],
+}
+GROUP_COLORS = {"Lämmitys": "#eb6834", "Sähköauto": "#2a78d6",
+                "Sauna": "#eda100", "Taloussähkö": TALOUS_COLOR}
+# Vuodet yhdellä sävyllä vaaleasta tummaan: uusin vuosi tummin
+YEAR_RAMP = ["#c9dcf4", "#94bbeb", "#5e98e0", "#2a78d6", "#1d5aa6", "#123d72"]
+PREV_YEAR_FROM = 2025  # Shelly-erittely alkaa tästä vuodesta
+
+
+def group_of(kohde):
+    for g, items in GROUPS.items():
+        if kohde in items:
+            return g
+    return "Taloussähkö"
+
+
+def group_view(df):
+    parts = df[df["tyyppi"].isin(["eritelty", "talous"])].copy()
+    parts["ryhma"] = parts["kohde"].map(group_of)
+    all_years = sorted(parts["vuosi"].unique())
+    last_year = all_years[-1]
+    last_month = int(parts.loc[parts["vuosi"] == last_year, "kk"].max())
+
+    c1, c2 = st.columns([3, 2])
+    years = c1.multiselect("Vuodet", all_years,
+                           default=[y for y in all_years if y >= PREV_YEAR_FROM] or all_years)
+    same = c2.toggle(f"Vain tammi–{KK[last_month - 1]} joka vuodelta", value=True,
+                     help=f"Vertaa samaa jaksoa, koska {last_year} on vielä kesken.")
+    if not years:
+        st.info("Valitse vähintään yksi vuosi.")
+        return
+    years = sorted(years)
+    d = parts[parts["vuosi"].isin(years)]
+    if same:
+        d = d[d["kk"] <= last_month]
+
+    tab = (d.pivot_table(index="ryhma", columns="vuosi", values="kwh", aggfunc="sum")
+           .reindex(index=list(GROUPS), columns=years).fillna(0))
+    pct = tab.div(tab.sum(), axis=1) * 100
+    period = f"tammi–{KK[last_month - 1]}" if same else "koko vuosi"
+    ramp = YEAR_RAMP[-len(years):] if len(years) <= len(YEAR_RAMP) else YEAR_RAMP
+    ycol = {y: ramp[min(i, len(ramp) - 1)] for i, y in enumerate(years)}
+
+    # 1) kWh: ryhmät vierekkäin, vuodet rinnakkaisina pylväinä
+    fig = go.Figure()
+    for y in years:
+        fig.add_bar(x=list(GROUPS), y=tab[y], name=str(y),
+                    marker=dict(color=ycol[y], line=dict(width=2, color="rgba(255,255,255,0.9)")),
+                    text=[fmt(v) for v in tab[y]], textposition="outside",
+                    textfont=dict(size=11),
+                    hovertemplate=f"<b>%{{x}}</b> {y}<br>%{{y:,.0f}} kWh<extra></extra>")
+    fig.update_layout(title=f"Kulutus ryhmittäin, {period} (kWh)", barmode="group",
+                      bargap=0.3, bargroupgap=0.06, height=440,
+                      legend=dict(orientation="h", y=-0.12), margin=dict(l=10, r=10, t=50, b=10))
+    fig.update_yaxes(gridcolor="rgba(128,128,128,0.15)")
+    st.plotly_chart(fig, use_container_width=True)
+
+    # 2) %: jokainen vuosi 100 %:n palkkina, ryhmien värit kiinteät
+    fig2 = go.Figure()
+    for g in GROUPS:
+        fig2.add_bar(y=[str(y) for y in years], x=pct.loc[g], name=g, orientation="h",
+                     marker=dict(color=GROUP_COLORS[g], line=dict(width=2, color="rgba(255,255,255,0.9)")),
+                     text=[f"{v:.0f} %" if v >= 5 else "" for v in pct.loc[g]],
+                     textposition="inside", insidetextanchor="middle",
+                     customdata=tab.loc[g],
+                     hovertemplate=f"<b>{g}</b> %{{y}}<br>%{{x:.1f}} % · %{{customdata:,.0f}} kWh<extra></extra>")
+    fig2.update_layout(title=f"Osuudet kokonaiskulutuksesta, {period} (%)", barmode="stack",
+                       bargap=0.35, height=120 + 60 * len(years),
+                       legend=dict(orientation="h", y=-0.25, traceorder="normal"),
+                       margin=dict(l=10, r=10, t=50, b=10))
+    fig2.update_xaxes(range=[0, 100], ticksuffix=" %", gridcolor="rgba(128,128,128,0.15)")
+    fig2.update_yaxes(type="category", autorange="reversed")
+    st.plotly_chart(fig2, use_container_width=True)
+
+    # 3) Taulukko: kWh, % ja muutos edelliseen valittuun vuoteen
+    def change(a, b):
+        return f"{(a / b - 1) * 100:+.0f} %" if b else "–"
+
+    full = pd.concat([tab, tab.sum().to_frame("Yhteensä").T])
+    out = pd.DataFrame(index=full.index)
+    for i, y in enumerate(years):
+        out[f"{y} kWh"] = full[y].round(0)
+        out[f"{y} %"] = (full[y] / tab[y].sum() * 100).round(1) if tab[y].sum() else 0.0
+        if i:
+            p = years[i - 1]
+            out[f"muutos {p}→{y}"] = [change(a, b) for a, b in zip(full[y], full[p])]
+    st.dataframe(out, use_container_width=True)
+
+    other = sorted(set(parts["kohde"]) - {k for v in GROUPS.values() for k in v})
+    st.caption("Lämmitys = " + " + ".join(GROUPS["Lämmitys"]) +
+               ". Taloussähkö sisältää kuivauskaapin" +
+               (" sekä " + ", ".join(other) if other else "") + ". "
+               f"Ennen vuotta {PREV_YEAR_FROM} lämmityksen osuus sisältyy taloussähköön, "
+               "koska kohteita ei vielä mitattu erikseen.")
+
+
 # --- Pääohjelma --------------------------------------------------------------
 
 if check_password():
@@ -320,8 +424,10 @@ if check_password():
         load_energy.clear()
         st.rerun()
 
-    t1, t2 = st.tabs(["Kuukausiraportti", "Vuosikooste"])
+    t1, t2, t3 = st.tabs(["Kuukausiraportti", "Vuosikooste", "Ryhmävertailu"])
     with t1:
         monthly_view(df, order, cmap)
     with t2:
         yearly_view(df, order, cmap)
+    with t3:
+        group_view(df)

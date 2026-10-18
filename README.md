@@ -8,6 +8,7 @@ kohteittain jaettuna sekä Helsinki-Vantaan keskilämpötilan (Ilmatieteen laito
 ```
 Shelly-laitteet ──(minuutin välein)──> HOOBS: shelly.db
 manual.csv (kokonais, auto, sauna) ──> HOOBS
+history.csv (Shelly-kohteet 2025-01 … 2026-09) ──> HOOBS
 HOOBS: shelly_export.py ──(kerran päivässä, FTPS)──> Hostinger: sivuston juuri /energia_kk.csv
 Streamlit Cloud: app.py ──(HTTPS + tunnukset)──> energia_kk.csv
                          └─> lämpötila: oma sääasema (Wunderground), varalla Ilmatieteen laitos
@@ -49,6 +50,22 @@ Tarkista selaimella, että `https://oma-domain.fi/energia/energia_kk.csv` kysyy 
 2. share.streamlit.io → New app → valitse repo, main file `app.py`.
 3. App settings → Secrets: liitä `.streamlit/secrets.toml.example`-tiedoston sisältö omilla arvoillasi.
 
+## Shelly-historia (history.csv)
+
+Kohteiden kuukausikulutus ajalta ennen keräintä, tiedostossa `~/shelly/history.csv`:
+
+```
+kuukausi;kohde;kwh;osittainen
+2025-01;maalampo;1234,5;
+2025-03;kuivauskaappi;12,0;1
+```
+
+- `kohde` kirjoitetaan täsmälleen kuten keräimen `DEVICES`-listassa, jotta historia ja
+  uusi data näkyvät samana sarjana.
+- `osittainen = 1`, jos kuukausi on vajaa. Kuukausi, jolta dataa ei ole, jätetään pois.
+- Historiaa käytetään kuukausille `HISTORY_UNTIL` (shelly_report.py, nyt `2026-09`) asti;
+  sen jälkeiset rivit ohitetaan ja data tulee `shelly.db`:stä.
+
 ## Datan muoto (energia_kk.csv)
 
 | sarake | kuvaus |
@@ -57,5 +74,5 @@ Tarkista selaimella, että `https://oma-domain.fi/energia/energia_kk.csv` kysyy 
 | kohde | esim. Sähköauto, Sauna, maalampopumppu, Kokonaiskulutus, Taloussähkö |
 | kwh | kulutus kuukaudessa |
 | tyyppi | `kokonais`, `eritelty` tai `talous` (erotus) |
-| lahde | käsin / Shelly / Datahub / erotus |
-| osittainen | 1 = Shelly-mittaus alkoi kesken kuukauden |
+| lahde | käsin / Shelly / Shelly-historia / Datahub / erotus |
+| osittainen | 1 = kohteen mittaus kattaa vain osan kuukaudesta |

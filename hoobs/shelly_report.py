@@ -10,6 +10,16 @@ Lähteet (kaikki kansiossa ~/shelly):
                    kokonais_kwh voi jättää tyhjäksi, jos Datahub-CSV on olemassa:
                        2026-10;;312,5;85
   datahub/*.csv    (valinnainen) Oma Datahubista ladatut kulutustiedostot
+  history.csv      (valinnainen) Shelly-kohteiden historia ajalta ennen keräintä,
+                   rivi per kuukausi per kohde:
+                       kuukausi;kohde;kwh;osittainen
+                       2025-01;maalampo;1234,5;
+                       2025-03;kuivauskaappi;12,0;1
+                   - kohde = täsmälleen sama nimi kuin keräimen DEVICES-listassa
+                   - osittainen = 1, jos kohteen kuukausi on vajaa (puuttuva osa
+                     päätyy taloussähköön); muuten tyhjä tai 0
+                   - puuttuva kuukausi jätetään kokonaan pois (ei 0-riviä)
+                   - käytetään kuukausille HISTORY_UNTIL asti, sen jälkeen shelly.db
 
 Taloussähkö = kokonaiskulutus - sähköauto - sauna - kaikki Shelly-mittaukset.
 Shelly-laitteet eivät saa mitata samaa kuormaa keskenään eivätkä autoa tai
@@ -30,8 +40,13 @@ BASE = Path.home() / "shelly"
 DB_PATH = BASE / "shelly.db"
 MANUAL = BASE / "manual.csv"
 DATAHUB_DIR = BASE / "datahub"
+HISTORY = BASE / "history.csv"
 OUT = BASE / "raportti.csv"
 TZ = ZoneInfo("Europe/Helsinki")
+
+# Viimeinen kuukausi, jonka Shelly-kohteet otetaan history.csv:stä.
+# Myöhemmät kuukaudet tulevat keräimen tietokannasta (shelly.db).
+HISTORY_UNTIL = "2026-09"
 
 
 def num(s):
@@ -119,7 +134,65 @@ def read_datahub():
     return totals
 
 
-# --- Shelly -----------------------------------------------------------------
+# --- Shelly-historia --------------------------------------------------------
+
+def read_history():
+    """Palauttaa ({kk: {kohde: kWh}}, {(kk, kohde) osittaisina}).
+    Rivit HISTORY_UNTIL-kuukauden jälkeen ohitetaan (ne tulevat shelly.db:stä).
+    Saman kuukauden ja kohteen myöhempi rivi korvaa aiemman."""
+    hist = defaultdict(dict)
+    partial = set()
+    if not HISTORY.exists():
+        return hist, partial
+    skipped = 0
+    for line in HISTORY.read_text(encoding="utf-8-sig").splitlines():
+        parts = [p.strip() for p in line.split(";")]
+        if len(parts) < 3 or not parts[0][:4].isdigit():
+            continue  # otsikko tai tyhjä rivi
+        m, k, v = parts[0], parts[1], num(parts[2])
+        if v is None or not k:
+            continue
+        if m > HISTORY_UNTIL:
+            skipped += 1
+            continue
+        hist[m][k] = v
+        if len(parts) > 3 and parts[3] in ("1", "x", "kyllä"):
+            partial.add((m, k))
+        else:
+            partial.discard((m, k))
+    if skipped:
+        print(f"history.csv: ohitettu {skipped} riviä {HISTORY_UNTIL} jälkeen "
+              f"(ne luetaan shelly.db:stä)")
+    return hist, partial
+
+
+def shelly_items():
+    """Yhdistää historian ja keräimen datan.
+    Palauttaa ({kk: {kohde: kWh}}, {kk: {kohde: lähde}}, {(kk, kohde) osittaisina})."""
+    hist, hist_partial = read_history()
+    db, first_ts = read_shelly()
+    first_month = {d: month_of(datetime.fromtimestamp(t, timezone.utc))
+                   for d, t in first_ts.items()}
+    values = defaultdict(dict)
+    source = defaultdict(dict)
+    partial = set()
+    for m, items in hist.items():
+        for k, v in items.items():
+            values[m][k] = v
+            source[m][k] = "Shelly-historia"
+    partial |= hist_partial
+    for m, items in db.items():
+        if m <= HISTORY_UNTIL:
+            continue  # historia on näille kuukausille ensisijainen
+        for d, v in items.items():
+            values[m][d] = v
+            source[m][d] = "Shelly"
+            if first_month.get(d) == m:
+                partial.add((m, d))
+    return values, source, partial
+
+
+# --- Shelly-keräin ----------------------------------------------------------
 
 def read_shelly():
     """kWh per kuukausi per laite energialaskurien muutoksista."""
@@ -159,13 +232,11 @@ def fmt(v):
 def main():
     man_total, items = read_manual()
     dh = read_datahub()
-    shelly, first_ts = read_shelly()
+    shelly, sources, partial = shelly_items()
 
     months = sorted(set(man_total) | set(dh) | set(shelly) |
                     {m for v in items.values() for m in v})
     devices = sorted({d for m in shelly.values() for d in m})
-    first_month = {d: month_of(datetime.fromtimestamp(t, timezone.utc))
-                   for d, t in first_ts.items()}
 
     out_rows = []
     for m in months:
@@ -179,7 +250,9 @@ def main():
             parts.append((name, v, "käsin" if v is not None else "puuttuu"))
         for d in devices:
             v = shelly.get(m, {}).get(d)
-            note = "Shelly, osittainen kk" if first_month.get(d) == m else "Shelly"
+            note = sources.get(m, {}).get(d, "Shelly")
+            if (m, d) in partial:
+                note += ", osittainen kk"
             parts.append((d, v, note if v is not None else "ei dataa"))
 
         known = sum(v for _, v, _ in parts if v is not None)

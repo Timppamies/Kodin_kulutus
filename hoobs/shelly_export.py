@@ -21,7 +21,7 @@ import configparser
 import csv
 import ftplib
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -36,13 +36,11 @@ REMOTE_NAME = "energia_kk.csv"
 def build_rows():
     man_total, items = r.read_manual()
     dh = r.read_datahub()
-    shelly, first_ts = r.read_shelly()
+    shelly, sources, partial = r.shelly_items()
 
     months = sorted(set(man_total) | set(dh) | set(shelly) |
                     {m for v in items.values() for m in v})
     devices = sorted({d for m in shelly.values() for d in m})
-    first_month = {d: r.month_of(datetime.fromtimestamp(t, timezone.utc))
-                   for d, t in first_ts.items()}
 
     rows = []  # kuukausi, kohde, kwh, tyyppi, lahde, osittainen
     for m in months:
@@ -57,8 +55,9 @@ def build_rows():
         for d in devices:
             v = shelly.get(m, {}).get(d)
             if v is not None:
-                rows.append([m, d, v, "eritelty", "Shelly",
-                             1 if first_month.get(d) == m else 0])
+                rows.append([m, d, v, "eritelty",
+                             sources.get(m, {}).get(d, "Shelly"),
+                             1 if (m, d) in partial else 0])
                 known += v
         if total is not None:
             rows.append([m, "Kokonaiskulutus", total, "kokonais", src, 0])

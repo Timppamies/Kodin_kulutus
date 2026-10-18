@@ -219,7 +219,7 @@ def monthly_view(df, order, cmap):
 
     partial = d[d["osittainen"] == 1]
     if not partial.empty:
-        st.caption("Shelly-mittaus alkanut kesken kuukauden: " +
+        st.caption("Mittaus vajaa osalta kuukautta: " +
                    ", ".join(f"{r.kohde} ({KK[r.kk - 1]})" for r in partial.itertuples()) +
                    ". Mittaamaton osa sisältyy taloussähköön.")
 
@@ -298,8 +298,9 @@ def yearly_view(df, order, cmap):
 
     st.info("🚗 Kesäkuusta 2025 alkaen taloudessa on kaksi sähköautoa. "
             "Vuoden 2026 alusta autot on ladattu kotona, koska veroetu muuttui.")
-    st.caption("Huom. Shelly-erittely alkaa lokakuusta 2026. Sitä ennen esim. maalämpöpumpun "
-               "kulutus sisältyy taloussähköön, joten vuosien osuudet eivät ole suoraan vertailukelpoisia.")
+    st.caption("Shelly-erittely alkaa tammikuusta 2025 (syyskuuhun 2026 asti Shellyn historiasta, "
+               "sen jälkeen suoraan mittauksista). Aiemmat vuodet eivät ole erittelyltään vertailukelpoisia: "
+               "niillä mittaamaton kulutus sisältyy taloussähköön.")
 
 
 # --- Pääohjelma --------------------------------------------------------------

@@ -333,24 +333,34 @@ def group_view(df):
     all_years = sorted(parts["vuosi"].unique())
     last_year = all_years[-1]
     last_month = int(parts.loc[parts["vuosi"] == last_year, "kk"].max())
+    # Vertailuun vain täydet kuukaudet: kuluva kuukausi jätetään pois.
+    # Tammikuussa ei ole vielä yhtään täyttä kuukautta, jolloin verrataan koko vuosia.
+    today = date.today()
+    running = (last_year, last_month) == (today.year, today.month)
+    last_full = last_month - 1 if running else last_month
+    if last_full == 0:
+        last_full = 12
 
     c1, c2 = st.columns([3, 2])
     years = c1.multiselect("Vuodet", all_years,
                            default=[y for y in all_years if y >= PREV_YEAR_FROM] or all_years)
-    same = c2.toggle(f"Vain tammi–{KK[last_month - 1]} joka vuodelta", value=True,
-                     help=f"Vertaa samaa jaksoa, koska {last_year} on vielä kesken.")
+    same = c2.toggle(f"Vain tammi–{KK[last_full - 1]} joka vuodelta", value=True,
+                     help="Vertaa samoja täysiä kuukausia joka vuodelta (YTD). "
+                          "Kuluva kuukausi ei ole mukana.")
     if not years:
         st.info("Valitse vähintään yksi vuosi.")
         return
     years = sorted(years)
     d = parts[parts["vuosi"].isin(years)]
     if same:
-        d = d[d["kk"] <= last_month]
+        d = d[d["kk"] <= last_full]
+        if running:
+            d = d[~((d["vuosi"] == last_year) & (d["kk"] == last_month))]
 
     tab = (d.pivot_table(index="ryhma", columns="vuosi", values="kwh", aggfunc="sum")
            .reindex(index=list(GROUPS), columns=years).fillna(0))
     pct = tab.div(tab.sum(), axis=1) * 100
-    period = f"tammi–{KK[last_month - 1]}" if same else "koko vuosi"
+    period = f"tammi–{KK[last_full - 1]}" if same else "koko vuosi"
     ramp = YEAR_RAMP[-len(years):] if len(years) <= len(YEAR_RAMP) else YEAR_RAMP
     ycol = {y: ramp[min(i, len(ramp) - 1)] for i, y in enumerate(years)}
 

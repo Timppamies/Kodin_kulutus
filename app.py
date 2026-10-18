@@ -215,7 +215,7 @@ def monthly_view(df, order, cmap):
                      tickmode="linear", tick0=0, dtick=5, tickformat="d",
                      zeroline=True, zerolinecolor="rgba(227,73,72,0.5)", zerolinewidth=1,
                      color=TEMP_COLOR, secondary_y=True)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     partial = d[d["osittainen"] == 1]
     if not partial.empty:
@@ -229,7 +229,7 @@ def monthly_view(df, order, cmap):
         tab.loc["Kokonaiskulutus"] = total
         tab.loc["Lämpötila °C"] = pd.Series(tvals, index=months, dtype="float")
         tab.columns = [KK[m - 1] for m in tab.columns]
-        st.dataframe(tab.round(1), use_container_width=True)
+        st.dataframe(tab.round(1), width="stretch")
 
 
 def yearly_view(df, order, cmap):
@@ -269,7 +269,7 @@ def yearly_view(df, order, cmap):
                       legend=dict(orientation="h", y=-0.12), margin=dict(l=10, r=10, t=50, b=10))
     fig.update_xaxes(type="category")  # vuodet kokonaislukuina, ei 2024,5
     fig.update_yaxes(gridcolor="rgba(128,128,128,0.15)")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # Osuudet
     share = yearly.T.reindex([k for k in order if k in yearly.columns])
@@ -277,7 +277,7 @@ def yearly_view(df, order, cmap):
     out = pd.DataFrame({f"{v} kWh": share[v].round(0) for v in years} |
                        {f"{v} %": pct[v].round(1) for v in years})
     st.subheader("Kohteiden osuudet")
-    st.dataframe(out, use_container_width=True)
+    st.dataframe(out, width="stretch")
 
     # Kuukausittainen kokonaiskulutus vuosittain rinnakkain
     tot = df[df["tyyppi"] == "kokonais"]
@@ -294,7 +294,7 @@ def yearly_view(df, order, cmap):
                        legend=dict(orientation="h", y=-0.15))
     fig2.update_xaxes(categoryorder="array", categoryarray=KK)
     fig2.update_yaxes(gridcolor="rgba(128,128,128,0.15)")
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig2, width="stretch")
 
     st.info("🚗 Kesäkuusta 2025 alkaen taloudessa on kaksi sähköautoa. "
             "Vuoden 2026 alusta autot on ladattu kotona, koska veroetu muuttui.")
@@ -366,7 +366,7 @@ def group_view(df):
                       bargap=0.3, bargroupgap=0.06, height=440,
                       legend=dict(orientation="h", y=-0.12), margin=dict(l=10, r=10, t=50, b=10))
     fig.update_yaxes(gridcolor="rgba(128,128,128,0.15)")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # 2) %: jokainen vuosi 100 %:n palkkina, ryhmien värit kiinteät
     fig2 = go.Figure()
@@ -383,7 +383,7 @@ def group_view(df):
                        margin=dict(l=10, r=10, t=50, b=10))
     fig2.update_xaxes(range=[0, 100], ticksuffix=" %", gridcolor="rgba(128,128,128,0.15)")
     fig2.update_yaxes(type="category", autorange="reversed")
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig2, width="stretch")
 
     # 3) Taulukko: kWh, % ja muutos edelliseen valittuun vuoteen
     def change(a, b):
@@ -397,7 +397,7 @@ def group_view(df):
         if i:
             p = years[i - 1]
             out[f"muutos {p}→{y}"] = [change(a, b) for a, b in zip(full[y], full[p])]
-    st.dataframe(out, use_container_width=True)
+    st.dataframe(out, width="stretch")
 
     other = sorted(set(parts["kohde"]) - {k for v in GROUPS.values() for k in v})
     st.caption("Lämmitys = " + " + ".join(GROUPS["Lämmitys"]) +
@@ -420,7 +420,7 @@ if check_password():
     last = df["kuukausi"].max()
     c1, c2 = st.columns([5, 1])
     c1.caption(f"Data {df['kuukausi'].min()} – {last}. Päivittyy kerran vuorokaudessa.")
-    if c2.button("🔄 Päivitä data", use_container_width=True):
+    if c2.button("🔄 Päivitä data", width="stretch"):
         load_energy.clear()
         st.rerun()
 

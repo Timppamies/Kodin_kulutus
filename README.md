@@ -12,6 +12,7 @@ history.csv (Shelly-kohteet 2024-01 … 2026-10-15) ──> HOOBS
 HOOBS: shelly_export.py ──(kerran päivässä, FTPS)──> Hostinger: sivuston juuri /energia_kk.csv
 Streamlit Cloud: app.py ──(HTTPS + tunnukset)──> energia_kk.csv
                          └─> lämpötila: oma sääasema (Wunderground), varalla Ilmatieteen laitos
+                         └─> lämmitystarveluku S17: data/s17_kk.csv (historia) + Wunderground (uudet kk)
 ```
 
 ## Tiedostot
@@ -74,6 +75,18 @@ history.csv:hen skriptillä; saman kohteen vanhat rivit korvataan:
 python3 hoobs/shelly_history_import.py "Varasto lämmitys" 2026YTD_varasto.csv
 python3 hoobs/shelly_history_import.py kuivauskaappi kuivauskaappi.csv --partial 2025-03
 ```
+
+## Lämpötilakorjaus
+
+`data/s17_kk.csv` sisältää oman sääaseman kuukausittaiset lämmitystarveluvut (S17)
+2011-01 alkaen. Luvut on laskettu sääaseman tietokannasta (taulu `wp_ws40_log_daily`,
+`metric = 'outTemp'`) kyselyllä, joka summaa kevään (tammi–kesä) alle +10 °C ja syksyn
+(heinä–joulu) alle +12 °C päiviltä erotuksen 17 °C − päivän keskilämpötila. Tiedoston
+jälkeiset kuukaudet sovellus laskee Wundergroundin päiväkeskiarvoista.
+
+Normaalivuosi on vuosien 2011–2025 keskiarvo (`NORMAL_YEARS` app.py:ssä). Ryhmävertailun
+kytkin korjaa lämmitysryhmän normaalivuoteen mallilla
+`kWh = a · vuorokaudet + b · S17`, joka sovitetaan kaikista täysistä kuukausista.
 
 ## Datan muoto (energia_kk.csv)
 

@@ -4,6 +4,7 @@ Tuulensuunkaari 12 sähkönkulutus – kuukausi- ja vuosikooste.
 Data: energia_kk.csv (HOOBS lähettää kerran päivässä Hostingeriin)
 Lämpötila: oma sääasema (Weather Underground PWS) jos avain on asetettu,
            muuten / puuttuville kuukausille Ilmatieteen laitos, Helsinki-Vantaa (fmisid 100968)
+Lämmitystarveluku: data/s17_kk.csv (oman aseman historia), uudemmat kuukaudet säähausta
 
 Secrets (.streamlit/secrets.toml tai Streamlit Cloudin Secrets-asetus):
     APP_PASSWORD  = "..."
@@ -19,6 +20,7 @@ import time
 import io
 import xml.etree.ElementTree as ET
 from datetime import date, timedelta
+from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -76,8 +78,8 @@ def load_energy():
 
 
 @st.cache_data(ttl=12 * 3600, show_spinner=False)
-def fmi_month_mean(year: int, month: int):
-    """Kuukauden keskilämpötila päivien keskiarvoista (kesken olevalle kk:lle tähänastinen)."""
+def fmi_month_days(year: int, month: int):
+    """Helsinki-Vantaan päivien keskilämpötilat kuukaudelta (kesken olevalta tähänastiset)."""
     start = date(year, month, 1)
     end = date(year + (month == 12), month % 12 + 1, 1)
     end = min(end, date.today())
@@ -107,12 +109,12 @@ def fmi_month_mean(year: int, month: int):
                     v = c.text
             if t and v and t[:7] == f"{year}-{month:02d}" and v.lower() != "nan":
                 vals.append(float(v))
-    return round(sum(vals) / len(vals), 1) if vals else None
+    return vals or None
 
 
 @st.cache_data(ttl=12 * 3600, show_spinner=False)
-def wu_month_mean(year: int, month: int, station: str, key: str):
-    """Oman sääaseman kuukausikeskiarvo päivien keskilämpötiloista (yksi kutsu / kk)."""
+def wu_month_days(year: int, month: int, station: str, key: str):
+    """Oman sääaseman päivien keskilämpötilat kuukaudelta (yksi kutsu / kk)."""
     start = date(year, month, 1)
     end = date(year + (month == 12), month % 12 + 1, 1) - timedelta(days=1)
     end = min(end, date.today())
@@ -131,23 +133,91 @@ def wu_month_mean(year: int, month: int, station: str, key: str):
         return None
     vals = [o["metric"]["tempAvg"] for o in obs
             if (o.get("metric") or {}).get("tempAvg") is not None]
-    return round(sum(vals) / len(vals), 1) if vals else None
+    return vals or None
+
+
+def month_days(year: int, month: int):
+    """(päivien keskilämpötilat, lähde): oma asema ensin, varalla Helsinki-Vantaa."""
+    key, station = st.secrets.get("WU_API_KEY"), st.secrets.get("WU_STATION")
+    vals = wu_month_days(year, month, station, key) if key and station else None
+    if vals:
+        return vals, f"oma sääasema {station}"
+    vals = fmi_month_days(year, month)
+    return (vals, "Helsinki-Vantaa") if vals else (None, None)
 
 
 def temps_for(periods):
     """Palauttaa ({kk: °C}, lähteen kuvaus). Oma asema ensin, puutteet Helsinki-Vantaalta."""
-    key, station = st.secrets.get("WU_API_KEY"), st.secrets.get("WU_STATION")
     temps, used = {}, set()
     for p in periods:
-        v = wu_month_mean(p.year, p.month, station, key) if key and station else None
-        if v is not None:
-            used.add(f"oma sääasema {station}")
-        else:
-            v = fmi_month_mean(p.year, p.month)
-            if v is not None:
-                used.add("Helsinki-Vantaa")
-        temps[p] = v
+        vals, src = month_days(p.year, p.month)
+        temps[p] = round(sum(vals) / len(vals), 1) if vals else None
+        if src:
+            used.add(src)
     return temps, " + ".join(sorted(used)) or "ei saatavilla"
+
+
+# --- Lämmitystarveluku (S17) ---------------------------------------------------
+
+S17_FILE = Path(__file__).parent / "data" / "s17_kk.csv"
+NORMAL_YEARS = range(2011, 2026)   # normaalivuosi: oman aseman 15 täyttä vuotta
+
+
+def s17_of(month: int, temps):
+    """Ilmatieteen laitoksen S17: kevät (tammi–kesä) < +10 °C, syksy < +12 °C."""
+    limit = 10 if month <= 6 else 12
+    return sum(17 - t for t in temps if t < limit)
+
+
+@st.cache_data(ttl=24 * 3600, show_spinner=False)
+def load_s17_static():
+    s = pd.read_csv(S17_FILE)
+    s["kuukausi"] = pd.PeriodIndex(s["kuukausi"], freq="M")
+    return s.set_index("kuukausi")
+
+
+def s17_table(periods):
+    """DataFrame (index = kuukausi): s17, paivia, paivia_kk, normaali, normaali_jakso, lahde.
+    Historia repon tiedostosta, sen jälkeiset kuukaudet säähausta päivistä laskien.
+    normaali_jakso = normaalikuukausi suhteutettuna mitattujen päivien määrään
+    (kesken oleva kuukausi verrataan vain sen tähänastisiin päiviin)."""
+    st_ = load_s17_static()
+    hist = st_[st_.index.year.isin(NORMAL_YEARS)]
+    normal = hist.groupby(hist.index.month)["s17"].mean()
+    rows = {}
+    for p in sorted(set(periods)):
+        if p in st_.index:
+            r = st_.loc[p]
+            rows[p] = dict(s17=r["s17"], paivia=r["paivia"], paivia_kk=r["paivia_kk"],
+                           lahde="oma sääasema (historia)")
+        else:
+            vals, src = month_days(p.year, p.month)
+            if not vals:
+                continue
+            rows[p] = dict(s17=round(s17_of(p.month, vals), 1), paivia=len(vals),
+                           paivia_kk=p.days_in_month, lahde=src)
+    t = pd.DataFrame.from_dict(rows, orient="index")
+    if t.empty:
+        return t
+    t["normaali"] = [normal.get(p.month) for p in t.index]
+    t["normaali_jakso"] = t["normaali"] * t["paivia"] / t["paivia_kk"]
+    return t
+
+
+def heating_model(monthly_kwh, s17t):
+    """Sovitus: kWh = a · vuorokaudet + b · S17 täysistä kuukausista.
+    Palauttaa dict(a, b, r2, n) tai None, jos dataa on alle 12 kuukautta."""
+    import numpy as np
+    d = pd.concat([monthly_kwh.rename("kwh"), s17t], axis=1, join="inner")
+    d = d[d["paivia"] == d["paivia_kk"]].dropna(subset=["kwh", "s17"])
+    if len(d) < 12:
+        return None
+    X = np.c_[d["paivia_kk"], d["s17"]]
+    y = d["kwh"].to_numpy()
+    (a, b), *_ = np.linalg.lstsq(X, y, rcond=None)
+    pred = X @ [a, b]
+    r2 = 1 - ((y - pred) ** 2).sum() / ((y - y.mean()) ** 2).sum()
+    return dict(a=a, b=b, r2=r2, n=len(d), data=d.assign(pred=pred))
 
 
 def color_map(df):
@@ -241,7 +311,7 @@ def yearly_view(df, order, cmap):
 
     # Tunnusluvut viimeisimmältä vuodelta
     y = years[-1]
-    cols = st.columns(3)
+    cols = st.columns(4)
     cols[0].metric(f"Kokonaiskulutus {y}", f"{fmt(totals.get(y, 0))} kWh",
                    help=f"{nmonths.get(y, 0)} kuukautta")
     if len(years) > 1 and y - 1 in totals:
@@ -255,6 +325,15 @@ def yearly_view(df, order, cmap):
         t = [v for v in tdict.values() if v is not None]
     cols[2].metric(f"Keskilämpötila {y}", f"{sum(t) / len(t):.1f} °C".replace(".", ",") if t else "–",
                    help=f"{tsrc}, kuukausien keskiarvo")
+    try:
+        s = s17_table(list(per))
+        idx = s["s17"].sum() / s["normaali_jakso"].sum() * 100 if not s.empty else None
+    except Exception:
+        idx = None
+    cols[3].metric(f"Lämmitystarve {y}", f"{idx:.0f} % normaalista" if idx else "–",
+                   help="Lämmitystarveluku S17 suhteessa oman sääaseman normaalivuoteen "
+                        f"({NORMAL_YEARS.start}–{NORMAL_YEARS.stop - 1}) samalta jaksolta. "
+                        "Yli 100 % = normaalia kylmempi.")
 
     fig = go.Figure()
     for k in order:
@@ -341,12 +420,26 @@ def group_view(df):
     if last_full == 0:
         last_full = 12
 
-    c1, c2 = st.columns([3, 2])
+    # Lämpötilamalli kaikista kuukausista, joilla lämmitys on mitattu
+    heat = parts[parts["ryhma"] == "Lämmitys"].groupby("kuukausi")["kwh"].sum()
+    heat = heat[heat > 0]
+    try:
+        s17t = s17_table(list(heat.index))
+        model = heating_model(heat, s17t) if not s17t.empty else None
+    except Exception as e:
+        s17t, model = pd.DataFrame(), None
+        st.caption(f"Lämmitystarvelukuja ei saatu: {e}")
+
+    c1, c2, c3 = st.columns([3, 2, 2])
     years = c1.multiselect("Vuodet", all_years,
                            default=[y for y in all_years if y >= PREV_YEAR_FROM] or all_years)
     same = c2.toggle(f"Vain tammi–{KK[last_full - 1]} joka vuodelta", value=True,
                      help="Vertaa samoja täysiä kuukausia joka vuodelta (YTD). "
                           "Kuluva kuukausi ei ole mukana.")
+    corrected = c3.toggle("Lämpötilakorjattu lämmitys", value=False, disabled=model is None,
+                          help="Lämmitys muunnetaan normaalivuoden säähän (oman sääaseman "
+                               f"{NORMAL_YEARS.start}–{NORMAL_YEARS.stop - 1} keskiarvo). "
+                               "Muut ryhmät pysyvät toteutuneina.")
     if not years:
         st.info("Valitse vähintään yksi vuosi.")
         return
@@ -359,8 +452,31 @@ def group_view(df):
 
     tab = (d.pivot_table(index="ryhma", columns="vuosi", values="kwh", aggfunc="sum")
            .reindex(index=list(GROUPS), columns=years).fillna(0))
-    pct = tab.div(tab.sum(), axis=1) * 100
     period = f"tammi–{KK[last_full - 1]}" if same else "koko vuosi"
+
+    # Sää vertailujaksolla ja lämpötilakorjaus: kWh − b · (S17 − normaali)
+    months = pd.Index(sorted(d["kuukausi"].unique()))
+    sj = s17t.reindex(months).dropna(subset=["s17"]) if not s17t.empty else pd.DataFrame()
+    if not sj.empty:
+        sj["vuosi"] = [p.year for p in sj.index]
+        wy = sj.groupby("vuosi")[["s17", "normaali_jakso"]].sum()
+        cols = st.columns(len(years))
+        for col, y in zip(cols, years):
+            if y in wy.index and wy.loc[y, "normaali_jakso"]:
+                v = wy.loc[y, "s17"] / wy.loc[y, "normaali_jakso"] * 100
+                col.metric(f"Lämmitystarve {y}", f"{v:.0f} %",
+                           help=f"S17 {wy.loc[y, 's17']:.0f} / normaali "
+                                f"{wy.loc[y, 'normaali_jakso']:.0f}, {period}. "
+                                "Yli 100 % = normaalia kylmempi.")
+    if corrected and model is not None and not sj.empty:
+        hm = sj.index.intersection(heat.index)
+        adj = (-model["b"] * (sj.loc[hm, "s17"] - sj.loc[hm, "normaali_jakso"]))
+        for y, v in adj.groupby([p.year for p in hm]).sum().items():
+            if y in tab.columns:
+                tab.loc["Lämmitys", y] += v
+    pct = tab.div(tab.sum(), axis=1) * 100
+    if corrected:
+        period += ", lämmitys lämpötilakorjattu"
     ramp = YEAR_RAMP[-len(years):] if len(years) <= len(YEAR_RAMP) else YEAR_RAMP
     ycol = {y: ramp[min(i, len(ramp) - 1)] for i, y in enumerate(years)}
 
@@ -415,6 +531,41 @@ def group_view(df):
                (" sekä " + ", ".join(other) if other else "") + ". "
                f"Ennen vuotta {PREV_YEAR_FROM} lämmityksen osuus sisältyy taloussähköön, "
                "koska kohteita ei vielä mitattu erikseen.")
+
+    if model is not None:
+        with st.expander("Lämpötilamalli"):
+            md = model["data"]
+            st.markdown(
+                f"Lämmitys ≈ **{fmt(model['a'], 1)} kWh/vrk** (säästä riippumaton osa: "
+                f"käyttövesi, IVK, kuivaus) + **{fmt(model['b'], 2)} kWh** jokaista "
+                f"lämmitystarveluvun astepäivää kohden. Selitysaste R² = "
+                f"**{fmt(model['r2'], 2)}**, {model['n']} täyttä kuukautta.")
+            normal_year = load_s17_static()
+            normal_year = normal_year[normal_year.index.year.isin(NORMAL_YEARS)]
+            st.caption(
+                "Lämmitystarveluku S17 (Ilmatieteen laitoksen menetelmä): päivät, joiden "
+                "keskilämpötila on keväällä alle +10 °C ja syksyllä alle +12 °C, summana "
+                f"17 °C − päivän keskilämpötila. Normaalivuosi = oman sääaseman "
+                f"{NORMAL_YEARS.start}–{NORMAL_YEARS.stop - 1} keskiarvo, "
+                f"{fmt(normal_year.groupby(normal_year.index.month)['s17'].mean().sum())} "
+                "astepäivää. Korjattu = toteutunut − kerroin × (S17 − normaali). Kertoimet "
+                "lasketaan uudelleen aina, kun dataa kertyy.")
+            x = [0, float(md["s17"].max())]
+            figm = go.Figure()
+            figm.add_scatter(x=md["s17"], y=md["kwh"], mode="markers", name="Kuukausi",
+                             marker=dict(size=9, color=GROUP_COLORS["Lämmitys"],
+                                         line=dict(width=2, color="rgba(255,255,255,0.9)")),
+                             text=[str(p) for p in md.index],
+                             hovertemplate="%{text}<br>S17 %{x:.0f} · %{y:,.0f} kWh<extra></extra>")
+            figm.add_scatter(x=x, y=[model["a"] * 30.4 + model["b"] * v for v in x],
+                             mode="lines", name="Malli (30 vrk kuukausi)",
+                             line=dict(color="#5f5e5a", width=2, dash="dash"), hoverinfo="skip")
+            figm.update_layout(height=380, margin=dict(l=10, r=10, t=30, b=10),
+                               legend=dict(orientation="h", y=-0.2),
+                               xaxis_title="Lämmitystarveluku S17 (kk)", yaxis_title="kWh / kk")
+            figm.update_xaxes(gridcolor="rgba(128,128,128,0.15)")
+            figm.update_yaxes(gridcolor="rgba(128,128,128,0.15)", rangemode="tozero")
+            st.plotly_chart(figm, width="stretch")
 
 
 # --- Pääohjelma --------------------------------------------------------------

@@ -69,7 +69,7 @@ kuukausi;kohde;kwh;osittainen
   historiaan vain päivät ennen keräimen käynnistymistä (1.–15.10.).
 
 Shelly Cloudin laitekohtaisen viennin (Consumption, Wh) saa muunnettua ja lisättyä
-history.csv:hen skriptillä; saman kohteen vanhat rivit korvataan:
+history.csv:hen skriptillä; saman kohteen rivit korvataan vain viennissä olevilta kuukausilta:
 
 ```
 python3 hoobs/shelly_history_import.py "Varasto lämmitys" 2026YTD_varasto.csv

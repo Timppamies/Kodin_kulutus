@@ -325,14 +325,23 @@ def yearly_view(df, order, cmap):
         t = [v for v in tdict.values() if v is not None]
     cols[2].metric(f"Keskilämpötila {y}", f"{sum(t) / len(t):.1f} °C".replace(".", ",") if t else "–",
                    help=f"{tsrc}, kuukausien keskiarvo")
+    idx, jakso = None, ""
     try:
         s = s17_table(list(per))
-        idx = s["s17"].sum() / s["normaali_jakso"].sum() * 100 if not s.empty else None
+        if not s.empty:
+            idx = s["s17"].sum() / s["normaali_jakso"].sum() * 100
+            lp, lr = s.index.max(), s.loc[s.index.max()]
+            loppu = (f"{int(lr['paivia'])}.{lp.month}." if lr["paivia"] < lr["paivia_kk"]
+                     else KK[lp.month - 1])
+            jakso = f"tammi–{loppu}"
     except Exception:
-        idx = None
-    cols[3].metric(f"Lämmitystarve {y}", f"{idx:.0f} % normaalista" if idx else "–",
+        pass
+    cols[3].metric(f"Lämmitystarve {y}" + (f" ({jakso})" if jakso else ""),
+                   f"{idx:.0f} % normaalista" if idx else "–",
                    help="Lämmitystarveluku S17 suhteessa oman sääaseman normaalivuoteen "
-                        f"({NORMAL_YEARS.start}–{NORMAL_YEARS.stop - 1}) samalta jaksolta. "
+                        f"({NORMAL_YEARS.start}–{NORMAL_YEARS.stop - 1}) samalta jaksolta, "
+                        "kesken oleva kuukausi tähänastisilta päiviltä. "
+                        "Ryhmävertailu käyttää vain täysiä kuukausia, joten luvut voivat erota. "
                         "Yli 100 % = normaalia kylmempi.")
 
     fig = go.Figure()
@@ -464,7 +473,7 @@ def group_view(df):
         for col, y in zip(cols, years):
             if y in wy.index and wy.loc[y, "normaali_jakso"]:
                 v = wy.loc[y, "s17"] / wy.loc[y, "normaali_jakso"] * 100
-                col.metric(f"Lämmitystarve {y}", f"{v:.0f} %",
+                col.metric(f"Lämmitystarve {y} ({period})", f"{v:.0f} %",
                            help=f"S17 {wy.loc[y, 's17']:.0f} / normaali "
                                 f"{wy.loc[y, 'normaali_jakso']:.0f}, {period}. "
                                 "Yli 100 % = normaalia kylmempi.")

@@ -16,7 +16,8 @@ Käyttö:
 
 - KOHDE = sama nimi kuin keräimen DEVICES-listassa, esim. "Varasto lämmitys"
 - --partial merkitsee kuukaudet vajaiksi (mittaamaton osa jää taloussähköön)
-- saman kohteen aiemmat rivit history.csv:ssä korvataan, muiden kohteiden säilyvät
+- saman kohteen rivit korvataan vain viennissä olevilta kuukausilta; muut
+  kuukaudet ja muiden kohteiden rivit säilyvät (vuosia voi tuoda erikseen)
 - oletustiedosto on ~/shelly/history.csv
 """
 
@@ -62,7 +63,9 @@ def main():
     if out.exists():
         for line in out.read_text(encoding="utf-8-sig").splitlines():
             parts = [p.strip() for p in line.split(";")]
-            if len(parts) >= 3 and parts[0][:4].isdigit() and parts[1] != a.kohde:
+            # korvataan vain saman kohteen ne kuukaudet, jotka ovat uudessa viennissä
+            if len(parts) >= 3 and parts[0][:4].isdigit() and not (
+                    parts[1] == a.kohde and parts[0] in months):
                 keep.append(line)
     new = [f"{m};{a.kohde};{f'{v:.3f}'.replace('.', ',')};{'1' if m in partial else ''}"
            for m, v in sorted(months.items())]

@@ -8,7 +8,7 @@ kohteittain jaettuna sekä Helsinki-Vantaan keskilämpötilan (Ilmatieteen laito
 ```
 Shelly-laitteet ──(minuutin välein)──> HOOBS: shelly.db
 manual.csv (kokonais, auto, sauna) ──> HOOBS
-history.csv (Shelly-kohteet 2025-01 … 2026-09) ──> HOOBS
+history.csv (Shelly-kohteet 2024-01 … 2026-10-15) ──> HOOBS
 HOOBS: shelly_export.py ──(kerran päivässä, FTPS)──> Hostinger: sivuston juuri /energia_kk.csv
 Streamlit Cloud: app.py ──(HTTPS + tunnukset)──> energia_kk.csv
                          └─> lämpötila: oma sääasema (Wunderground), varalla Ilmatieteen laitos

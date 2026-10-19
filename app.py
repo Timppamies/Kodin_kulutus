@@ -298,7 +298,7 @@ def yearly_view(df, order, cmap):
 
     st.info("🚗 Kesäkuusta 2025 alkaen taloudessa on kaksi sähköautoa. "
             "Vuoden 2026 alusta autot on ladattu kotona, koska veroetu muuttui.")
-    st.caption("Shelly-erittely alkaa tammikuusta 2025 (15.10.2026 asti Shellyn historiasta, "
+    st.caption("Shelly-erittely alkaa tammikuusta 2024 (15.10.2026 asti Shellyn historiasta, "
                "sen jälkeen suoraan mittauksista). Aiemmat vuodet eivät ole erittelyltään vertailukelpoisia: "
                "niillä mittaamaton kulutus sisältyy taloussähköön.")
 
@@ -317,7 +317,7 @@ GROUP_COLORS = {"Lämmitys": "#eb6834", "Sähköauto": "#2a78d6",
                 "Sauna": "#eda100", "Taloussähkö": TALOUS_COLOR}
 # Vuodet yhdellä sävyllä vaaleasta tummaan: uusin vuosi tummin
 YEAR_RAMP = ["#c9dcf4", "#94bbeb", "#5e98e0", "#2a78d6", "#1d5aa6", "#123d72"]
-PREV_YEAR_FROM = 2025  # Shelly-erittely alkaa tästä vuodesta
+PREV_YEAR_FROM = 2024  # Shelly-erittely alkaa tästä vuodesta
 
 
 def group_of(kohde):

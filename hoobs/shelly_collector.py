@@ -146,7 +146,7 @@ def main():
                   r["voltage"], r["current"]) for r in rows])
         except Exception as e:
             errors += 1
-            print(f"{d['name']} ({d['ip']}): {e}", file=sys.stderr)
+            print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {d['name']} ({d['ip']}): {e}", file=sys.stderr)
 
     con.commit()
     con.close()

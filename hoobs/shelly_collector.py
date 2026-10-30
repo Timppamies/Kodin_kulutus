@@ -131,7 +131,8 @@ def init_db(con):
 
 def main():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(DB_PATH)
+    con = sqlite3.connect(DB_PATH, timeout=30)  # odota lukitusta 30 s
+    con.execute("PRAGMA journal_mode=WAL")      # lukija ei estä kirjoittajaa
     init_db(con)
     ts = int(time.time())
     errors = 0

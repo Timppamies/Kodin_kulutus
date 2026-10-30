@@ -200,7 +200,7 @@ def read_shelly():
     first_ts = {}
     if not DB_PATH.exists():
         return result, first_ts
-    con = sqlite3.connect(DB_PATH)
+    con = sqlite3.connect(DB_PATH, timeout=30)  # keräin voi kirjoittaa samaan aikaan
     rows = con.execute(
         "SELECT device, channel, ts, energy_wh FROM readings "
         "WHERE energy_wh IS NOT NULL ORDER BY device, channel, ts")

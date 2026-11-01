@@ -213,14 +213,45 @@ def read_shelly():
     # Pro 3EM: käytetään vain kokonaiskanavaa, ettei vaiheita lasketa kahdesti
     has_total = {d for (d, c) in channels if c.endswith(".total")}
 
+    skipped = defaultdict(int)
     for (dev, ch), series in channels.items():
         if dev in has_total and not ch.endswith(".total"):
             continue
-        for (_, prev), (ts, cur) in zip(series, series[1:]):
-            delta = cur - prev if cur >= prev else cur  # laskurin nollautuminen
+        for (pts, prev), (ts, cur) in zip(series, series[1:]):
+            delta = counter_delta(prev, cur, ts - pts)
+            if delta is None:
+                skipped[dev] += 1
+                continue
             m = month_of(datetime.fromtimestamp(ts, timezone.utc))
             result[m][dev] += delta / 1000
+    for dev, n in skipped.items():
+        print(f"{dev}: ohitettu {n} epäuskottavaa laskurin muutosta")
     return result, first_ts
+
+
+# Suurin uskottava keskiteho yhdelle laitteelle (W): 3 × 63 A, reilusti yli kaiken
+# kotona mitattavan. Tätä suurempi lukemien välinen kasvu on mittausvirhe.
+MAX_POWER_W = 45_000
+
+
+def counter_delta(prev, cur, dt_s):
+    """Energialaskurin muutos (Wh) kahden lukeman välillä, tai None jos epäuskottava.
+
+    - Laskuri kasvaa: erotus.
+    - Laskuri putoaa alle puoleen: todellinen nollautuminen (esim. tehdasasetukset),
+      kulutus on uusi lukema.
+    - Laskuri palaa vähän taaksepäin: Shelly käynnistyi uudelleen ja palautti
+      viimeksi tallennetun, hieman pienemmän arvon. Kulutusta ei lisätä.
+    """
+    if cur >= prev:
+        delta = cur - prev
+    elif cur < prev * 0.5:
+        delta = cur
+    else:
+        return 0.0
+    if delta > MAX_POWER_W * max(dt_s, 60) / 3600:
+        return None
+    return delta
 
 
 # --- Raportti ---------------------------------------------------------------

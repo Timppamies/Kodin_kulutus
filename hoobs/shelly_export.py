@@ -49,6 +49,8 @@ def build_rows():
         known = 0.0
         for name in r.MANUAL_ITEMS:
             v = items[name].get(m)
+            if name in shelly.get(m, {}):
+                continue  # samanniminen Shelly-mittaus korvaa käsin syötetyn
             if v is not None:
                 rows.append([m, name, v, "eritelty", "käsin", 0])
                 known += v

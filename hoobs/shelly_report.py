@@ -24,6 +24,8 @@ Lähteet (kaikki kansiossa ~/shelly):
                    - laitekohtaisen Shelly-viennin muunnos: shelly_history_import.py
 
 Taloussähkö = kokonaiskulutus - sähköauto - sauna - kaikki Shelly-mittaukset.
+Jos Shelly-laitteen nimi on sama kuin käsin syötetyn kohteen (esim. "Sauna"),
+Shellyn mittaus korvaa käsin syötetyn luvun niinä kuukausina, joilta mittausta on.
 Shelly-laitteet eivät saa mitata samaa kuormaa keskenään eivätkä autoa tai
 saunaa, muuten sama kulutus vähennetään kahdesti.
 Tulos tulostetaan ruudulle ja tallennetaan tiedostoon raportti.csv.
@@ -277,6 +279,8 @@ def main():
         # Kaikki tiedossa olevat eritellyt kulutukset
         parts = []  # (nimi, kWh, huomautus)
         for name in MANUAL_ITEMS:
+            if name in shelly.get(m, {}):
+                continue  # samanniminen Shelly-mittaus korvaa käsin syötetyn
             v = items[name].get(m)
             parts.append((name, v, "käsin" if v is not None else "puuttuu"))
         for d in devices:

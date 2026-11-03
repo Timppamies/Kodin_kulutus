@@ -76,6 +76,13 @@ python3 hoobs/shelly_history_import.py "Varasto lämmitys" 2026YTD_varasto.csv
 python3 hoobs/shelly_history_import.py kuivauskaappi kuivauskaappi.csv --partial 2025-03
 ```
 
+## Kokonaiskulutus Caruna Plus -palvelusta (valinnainen)
+
+`hoobs/caruna_fetch.py` hakee päiväkulutuksen Caruna Plus -palvelusta (epävirallinen
+rajapinta, kirjautuminen Caruna Plus -tunnuksilla) ja tallentaa sen kansioon
+`~/shelly/datahub/caruna_VVVV-KK.csv`. shelly_report.py lukee ne Datahub-tiedostoina, jolloin
+kokonaiskulutus ohittaa manual.csv:n luvun. Käyttöönotto: ks. skriptin loppu.
+
 ## Lämpötilakorjaus
 
 `data/s17_kk.csv` sisältää oman sääaseman kuukausittaiset lämmitystarveluvut (S17)

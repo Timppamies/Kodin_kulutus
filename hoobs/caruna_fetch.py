@@ -176,15 +176,31 @@ def pick_asset(assets, gsrn=None):
 
 
 def daily_rows(energy):
-    """Caruna-vastaus -> [(aikaleima, kWh)] ilman tyhjiä (tulevia) päiviä."""
+    """Caruna-vastaus -> [(aikaleima, kWh)] ilman tyhjiä (tulevia) päiviä.
+
+    Tukee kahta vastausmuotoa:
+    - uusi: lista [{timestamp, totalConsumption, invoicedConsumption, statuses, …}]
+    - vanha: {"results": [{"data": [{timestamp, consumption, boughtenergy, …}]}]}
+    """
+    if isinstance(energy, dict):
+        items = [d for res in energy.get("results", []) for d in res.get("data", [])]
+    elif isinstance(energy, list):
+        items = energy
+    else:
+        items = []
+    if DEBUG and items:
+        log("vastauksen kentät:", sorted(items[0].keys()))
     rows = []
-    for res in energy.get("results", []):
-        for d in res.get("data", []):
-            v = d.get("consumption")
-            if v is None:
-                v = d.get("boughtenergy")
-            if v is not None and d.get("timestamp"):
-                rows.append((d["timestamp"], float(v)))
+    for d in items:
+        if not isinstance(d, dict) or not d.get("timestamp"):
+            continue
+        v = None
+        for key in ("totalConsumption", "consumption", "invoicedConsumption", "boughtenergy"):
+            if d.get(key) is not None:
+                v = d[key]
+                break
+        if v is not None:
+            rows.append((d["timestamp"], float(v)))
     return rows
 
 
